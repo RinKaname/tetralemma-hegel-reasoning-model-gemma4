@@ -3,7 +3,7 @@ import torch
 import kagglehub
 import re
 from transformers import AutoProcessor, AutoModelForCausalLM
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # --- Setup & Model Loading ---
 print("Downloading and loading model (this may take a minute)...")

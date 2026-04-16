@@ -3,3 +3,4 @@ duckduckgo-search
 kagglehub
 transformers
 torch
+accelerate
