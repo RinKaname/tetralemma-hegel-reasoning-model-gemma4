@@ -13,7 +13,7 @@ MODEL_PATH = kagglehub.model_download("google/gemma-4/transformers/gemma-4-e2b-i
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_PATH,
-    dtype=torch.float16,
+    torch_dtype=torch.float16,
     device_map="auto"
 )
 
@@ -69,8 +69,7 @@ def analyze_query(query, framework):
     text = processor.apply_chat_template(
         messages,
         tokenize=False,
-        add_generation_prompt=True,
-        enable_thinking=True # We enable thinking to get the highest quality reasoning
+        add_generation_prompt=True
     )
 
     inputs = processor(text=text, return_tensors="pt").to(model.device)
@@ -81,10 +80,14 @@ def analyze_query(query, framework):
     raw_response = processor.decode(outputs[0][input_len:], skip_special_tokens=False)
 
     # Parse the thinking block (if any) and the actual structured content
-    parsed_response = processor.parse_response(raw_response)
-
-    content = parsed_response.get('content', '')
-    thinking = parsed_response.get('thinking', '')
+    # Fallback to standard parsing if the futuristic processor.parse_response is not available
+    content = raw_response
+    thinking = ""
+    if hasattr(processor, 'parse_response'):
+        parsed_response = processor.parse_response(raw_response)
+        if isinstance(parsed_response, dict):
+            content = parsed_response.get('content', raw_response)
+            thinking = parsed_response.get('thinking', '')
 
     # Extract our XML structure
     structured_reasoning, conclusion = parse_output(content, framework)
@@ -107,7 +110,7 @@ custom_css = """
 """
 
 with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
-    gr.Markdown("# 🏛️ Gemma 4: Philosophical Cognitive Architecture")
+    gr.Markdown("# 🏛️ Gemma 4: Dialectical-Engine")
     gr.Markdown("This agent breaks 'Hallucinated Consensus' by passing user queries through rigorous, ancient philosophical frameworks before presenting a final, actionable synthesis. Built for the **Safety & Trust** track.")
 
     with gr.Row():
