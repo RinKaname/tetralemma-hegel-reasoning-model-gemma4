@@ -3,6 +3,7 @@ import torch
 import kagglehub
 import re
 from transformers import AutoProcessor, AutoModelForCausalLM
+from duckduckgo_search import DDGS
 
 # --- Setup & Model Loading ---
 print("Downloading and loading model (this may take a minute)...")
@@ -34,6 +35,20 @@ TETRALEMMA_SYSTEM_PROMPT = """Follow this exact structure. Do not skip tags.
 <conclusion> Actionable takeaway + explicit boundary conditions. Note what would shift the conclusion if new context emerges. </conclusion>"""
 
 # --- Processing Logic ---
+
+def perform_search(query):
+    """
+    Acts as a simple RAG retrieval step using a free search engine to provide factual grounding.
+    """
+    try:
+        results = DDGS().text(query, max_results=3)
+        context = ""
+        for r in results:
+            context += f"- {r['body']}\n"
+        return context if context else "No factual context found."
+    except Exception as e:
+        return f"Search failed: {str(e)}"
+
 def parse_output(response_text, framework):
     """
     Splits the raw LLM output into the 'hidden reasoning' (XML tags)
@@ -56,13 +71,21 @@ def parse_output(response_text, framework):
     # Fallback if tags weren't strictly followed
     return response_text, "The model did not return a clean conclusion tag. See reasoning block for full text."
 
-def analyze_query(query, framework):
+def analyze_query(query, framework, enable_search=True):
     # Select prompt based on dropdown
     system_prompt = HEGELIAN_SYSTEM_PROMPT if framework == "Hegelian Dialectic" else TETRALEMMA_SYSTEM_PROMPT
 
+    # RAG / Search Step
+    search_context = ""
+    if enable_search:
+        search_context = perform_search(query)
+        augmented_query = f"Background Fact-Check Context:\n{search_context}\n\nBased on this context and your knowledge, address the following query:\n{query}"
+    else:
+        augmented_query = query
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query},
+        {"role": "user", "content": augmented_query},
     ]
 
     # Process input
@@ -94,6 +117,9 @@ def analyze_query(query, framework):
 
     # Format the hidden reasoning block nicely
     hidden_reasoning_display = ""
+    if enable_search:
+        hidden_reasoning_display += f"### Tool Use (Agentic RAG Search):\n```text\n{search_context}\n```\n\n---\n\n"
+
     if thinking:
         hidden_reasoning_display += f"### Internal Model Thoughts:\n```text\n{thinking}\n```\n\n---\n\n"
 
@@ -127,7 +153,12 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                 label="Select Cognitive Framework",
                 info="Hegel resolves operational conflicts. Tetralemma deconstructs false dichotomies."
             )
-            analyze_btn = gr.Button("Run Analysis", variant="primary")
+            enable_search_checkbox = gr.Checkbox(
+                label="Enable Agentic Search (RAG)",
+                value=True,
+                info="Prevents factual hallucinations before reasoning."
+            )
+            analyze_btn = gr.Button("Run Agentic Analysis", variant="primary")
 
     gr.Markdown("## Resolution")
 
@@ -145,7 +176,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
 
     analyze_btn.click(
         fn=analyze_query,
-        inputs=[user_query, framework_dropdown],
+        inputs=[user_query, framework_dropdown, enable_search_checkbox],
         outputs=[reasoning_output, final_output]
     )
 
