@@ -92,7 +92,8 @@ def analyze_query(query, framework, enable_search=True):
     text = processor.apply_chat_template(
         messages,
         tokenize=False,
-        add_generation_prompt=True
+        add_generation_prompt=True,
+        enable_thinking=True
     )
 
     inputs = processor(text=text, return_tensors="pt").to(model.device)
