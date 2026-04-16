@@ -1,0 +1,5 @@
+gradio
+duckduckgo-search
+kagglehub
+transformers
+torch
