@@ -1,4 +1,4 @@
-# Hegelian and Tetralemma Reasoning Frameworks on Gemma 4
+# Gemma-4 Dialectical-Engine
 
 ## Overview of the Experiment
 This experiment explores the application of structured philosophical frameworks—specifically the Hegelian Dialectic and the Buddhist-inspired Tetralemma—as cognitive scaffolding for Large Language Models (LLMs), using Gemma 4 as the testbed. The primary objective is to steer the model away from \"hallucinated consensus\" (the tendency to output neutral, uncritical middle grounds often induced by RLHF) and towards deep, analytical, and logically sound tension resolution.
