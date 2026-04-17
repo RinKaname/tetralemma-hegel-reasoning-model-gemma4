@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 from threading import Thread
 from transformers import AutoProcessor, AutoModelForCausalLM, TextIteratorStreamer
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # --- Setup & Model Loading ---
 print("Downloading and loading model (this may take a minute)...")
