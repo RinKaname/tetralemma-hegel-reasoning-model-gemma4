@@ -142,24 +142,24 @@ def parse_output(response_text, framework):
     # Fallback for mid-stream
     return response_text, "Thinking..."
 
-def chat_inference(chat_history, framework, enable_search=True):
+def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     """
     Handles multi-turn conversational logic for the 'Philosophical Debate' tab.
     Maintains context of the debate while applying the selected framework to the newest turn.
     """
     if not chat_history:
-        yield chat_history
+        yield chat_history, raw_messages
         return
 
     user_msg = chat_history[-1][0]
     chat_history[-1] = (user_msg, "Initializing Agentic RAG...")
-    yield chat_history
+    yield chat_history, raw_messages
 
     # RAG / Search Step
     search_context = ""
     if enable_search:
         chat_history[-1] = (user_msg, "Searching DuckDuckGo and scraping URLs for factual context...")
-        yield chat_history
+        yield chat_history, raw_messages
         search_context = perform_search(user_msg)
         augmented_query = f"Background Fact-Check Context:\n{search_context}\n\nBased on this context and our ongoing debate, address my latest point:\n{user_msg}"
     else:
@@ -167,18 +167,20 @@ def chat_inference(chat_history, framework, enable_search=True):
 
     system_prompt = HEGELIAN_SYSTEM_PROMPT if framework == "Hegelian Dialectic" else TETRALEMMA_SYSTEM_PROMPT
 
-    # Build full conversation history for context
-    messages = [{"role": "system", "content": system_prompt}]
-    for human, agent in chat_history[:-1]:  # Skip the current uncompleted turn
-        messages.append({"role": "user", "content": human})
-        messages.append({"role": "assistant", "content": agent})
+    # Initialize raw messages if empty
+    if not raw_messages:
+        raw_messages = [{"role": "system", "content": system_prompt}]
+    elif raw_messages[0]["role"] == "system":
+        # Update system prompt in case framework changed
+        raw_messages[0]["content"] = system_prompt
 
-    # Append the newest augmented query
-    messages.append({"role": "user", "content": augmented_query})
+    # Append the user's augmented query
+    current_messages = list(raw_messages)
+    current_messages.append({"role": "user", "content": augmented_query})
 
     # Process input
     text = processor.apply_chat_template(
-        messages,
+        current_messages,
         tokenize=False,
         add_generation_prompt=True,
         enable_thinking=True
@@ -226,7 +228,11 @@ def chat_inference(chat_history, framework, enable_search=True):
             chat_display += f"### Philosophical Framework Structure:\n```text\n{structured_reasoning}\n```\n</details>"
 
         chat_history[-1] = (user_msg, chat_display)
-        yield chat_history
+        yield chat_history, raw_messages
+
+    # Append the raw text output to the raw_messages history to avoid UI pollution in the LLM context
+    raw_messages.append({"role": "user", "content": user_msg}) # Store clean user msg, not augmented
+    raw_messages.append({"role": "assistant", "content": content})
 
     # Log the interaction
     save_chat_to_json(user_msg, framework, search_context, structured_reasoning, conclusion)
@@ -382,11 +388,12 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                 )
 
             chatbot = gr.Chatbot(height=500, show_copy_button=True)
+            raw_messages_state = gr.State([])
 
             with gr.Row():
                 chat_input = gr.Textbox(placeholder="Debate the agent or ask a follow-up...", scale=4)
                 chat_submit_btn = gr.Button("Send", variant="primary", scale=1)
-                chat_clear_btn = gr.ClearButton([chat_input, chatbot], scale=1)
+                chat_clear_btn = gr.ClearButton([chat_input, chatbot, raw_messages_state], scale=1)
 
             # Wiring for the Chat interface
             def user(user_message, history):
@@ -399,8 +406,8 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                 queue=False
             ).then(
                 fn=chat_inference,
-                inputs=[chatbot, chat_framework_dropdown, chat_search_checkbox],
-                outputs=[chatbot]
+                inputs=[chatbot, raw_messages_state, chat_framework_dropdown, chat_search_checkbox],
+                outputs=[chatbot, raw_messages_state]
             )
 
             # Also allow pressing Enter in the textbox
@@ -411,8 +418,8 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                 queue=False
             ).then(
                 fn=chat_inference,
-                inputs=[chatbot, chat_framework_dropdown, chat_search_checkbox],
-                outputs=[chatbot]
+                inputs=[chatbot, raw_messages_state, chat_framework_dropdown, chat_search_checkbox],
+                outputs=[chatbot, raw_messages_state]
             )
 
 if __name__ == "__main__":
