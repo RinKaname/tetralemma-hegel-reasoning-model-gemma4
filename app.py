@@ -167,13 +167,14 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
     final_output = gr.Textbox(
         label="Actionable Conclusion & Boundary Conditions",
         lines=4,
-        elem_id="conclusion_box"
+        elem_id="conclusion_box",
+        show_copy_button=True
     )
 
     # The complex reasoning is hidden in an accordion
     with gr.Accordion("View System 2 Philosophical Reasoning Flow (Audit Log)", open=False):
         gr.Markdown("Transparency is critical for Trust & Safety. Here is the exact logical scaffolding the model used to arrive at the conclusion.")
-        reasoning_output = gr.Markdown()
+        reasoning_output = gr.Markdown(show_copy_button=True)
 
     analyze_btn.click(
         fn=analyze_query,
