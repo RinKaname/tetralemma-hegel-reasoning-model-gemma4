@@ -3,3 +3,6 @@ duckduckgo-search
 kagglehub
 transformers
 torch
+accelerate
+beautifulsoup4
+requests
