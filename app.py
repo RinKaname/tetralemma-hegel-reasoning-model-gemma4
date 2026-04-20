@@ -237,6 +237,21 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     # Log the interaction
     save_chat_to_json(user_msg, framework, search_context, structured_reasoning, conclusion)
 
+import tempfile
+
+def export_chat_history(chat_history, raw_messages):
+    """Exports the chat history to a JSON file."""
+    export_data = {
+        "chat_history": chat_history,
+        "raw_messages": raw_messages
+    }
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+        json.dump(export_data, f, indent=4)
+        file_path = f.name
+
+    return gr.update(value=file_path, visible=True)
+
 def analyze_query(query, framework, enable_search=True):
     # Yield initial empty states for streaming
     yield "", "Initializing Agentic RAG...", gr.update(visible=False)
@@ -393,9 +408,26 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
             with gr.Row():
                 chat_input = gr.Textbox(placeholder="Debate the agent or ask a follow-up...", scale=4)
                 chat_submit_btn = gr.Button("Send", variant="primary", scale=1)
+                chat_save_btn = gr.Button("Save Chat", variant="secondary", scale=1)
                 chat_clear_btn = gr.ClearButton([chat_input, chatbot, raw_messages_state], scale=1)
 
+            with gr.Row():
+                # Hidden download button for exported chat
+                chat_download_btn = gr.DownloadButton("Download Chat (JSON)", visible=False)
+
+            # Hide the download button when clearing the chat
+            chat_clear_btn.click(
+                fn=lambda: gr.update(visible=False),
+                inputs=[],
+                outputs=[chat_download_btn]
+            )
+
             # Wiring for the Chat interface
+            chat_save_btn.click(
+                fn=export_chat_history,
+                inputs=[chatbot, raw_messages_state],
+                outputs=[chat_download_btn]
+            )
             def user(user_message, history):
                 return "", history + [[user_message, None]]
 
