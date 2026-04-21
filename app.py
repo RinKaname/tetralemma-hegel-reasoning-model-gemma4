@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 from threading import Thread
 from transformers import AutoProcessor, AutoModelForCausalLM, TextIteratorStreamer
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # --- Setup & Model Loading ---
 print("Downloading and loading model (this may take a minute)...")
@@ -19,7 +19,7 @@ MODEL_PATH = kagglehub.model_download("google/gemma-4/transformers/gemma-4-e2b-i
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_PATH,
-    torch_dtype=torch.float16,
+    dtype=torch.float16,
     device_map="auto"
 )
 
