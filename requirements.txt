@@ -1,5 +1,5 @@
 gradio
-duckduckgo-search
+ddgs
 kagglehub
 transformers
 torch
