@@ -6,3 +6,5 @@ torch
 accelerate
 beautifulsoup4
 requests
+chromadb
+sentence-transformers
