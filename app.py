@@ -5,6 +5,7 @@ import re
 import json
 import os
 import requests
+import chromadb
 from bs4 import BeautifulSoup
 from threading import Thread
 from transformers import AutoProcessor, AutoModelForCausalLM, TextIteratorStreamer
@@ -23,23 +24,65 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto"
 )
 
+# --- Vector Database (Metamemory) Setup ---
+chroma_client = chromadb.PersistentClient(path="./core_memory_db")
+core_memory_collection = chroma_client.get_or_create_collection(name="core_insights")
+
+def query_core_memory(topic):
+    """Searches the persistent memory bank for relevant past insights."""
+    try:
+        results = core_memory_collection.query(
+            query_texts=[topic],
+            n_results=3
+        )
+        documents = results.get('documents', [[]])[0]
+        if documents:
+            return "\n".join([f"- {doc}" for doc in documents])
+        return "No relevant past insights found."
+    except Exception as e:
+        return f"Memory retrieval failed: {str(e)}"
+
+def deposit_core_memory(insight):
+    """Saves a new insight into the persistent memory bank."""
+    if not insight or len(insight.strip()) < 10:
+        return False
+
+    try:
+        # Generate a unique ID using a simple hash of the content to prevent exact duplicates
+        import hashlib
+        doc_id = hashlib.md5(insight.encode('utf-8')).hexdigest()
+
+        core_memory_collection.add(
+            documents=[insight],
+            ids=[doc_id]
+        )
+        return True
+    except Exception as e:
+        print(f"Failed to deposit memory: {str(e)}")
+        return False
+
 # --- Prompts ---
 HEGELIAN_SYSTEM_PROMPT = """Follow this exact structure in your reasoning before responding. Do not skip tags.
+<metamemory> Reflect on the provided Internal Agent Memory. Has your past knowledge on this topic been validated or challenged? </metamemory>
 <reason> State initial position + core assumption. </reason>
 <critique> Attack the weakest logical/empirical link. Do not nitpick. </critique>
 <respond> Concede at least one valid critique point, then defend/adjust. </respond>
 <synthesis> Fuse reason & critique into a new framing that resolves the tension without averaging them. </synthesis>
-<final> Clear, actionable conclusion. Note remaining uncertainty if any. </final>"""
+<final> Clear, actionable conclusion. Note remaining uncertainty if any. </final>
+<memory_consolidation> If you learned a new universal rule, a fact about the user, or a valuable insight during this exchange, state it clearly here so it can be saved to your permanent memory bank. If nothing new was learned, leave this blank. </memory_consolidation>"""
 
 TETRALEMMA_SYSTEM_PROMPT = """Follow this exact structure. Do not skip tags.
+<metamemory> Reflect on the provided Internal Agent Memory. How does it inform the baseline rule or exceptions? </metamemory>
 <reason> State the baseline rule/assumption. </reason>
 <exception> Present a valid counterfactual or edge case that breaks the rule. </exception>
 <tension> Describe the systemic friction when rule & exception coexist in practice. </tension>
 <categorization> Clearly separate domains: where the rule holds, where the exception applies, and why. </categorization>
 <deconstruction> Refute the false dichotomy. Reveal the higher-order framing, interdependence, or contextual mechanism that transcends both. </deconstruction>
-<conclusion> Actionable takeaway + explicit boundary conditions. Note what would shift the conclusion if new context emerges. </conclusion>"""
+<conclusion> Actionable takeaway + explicit boundary conditions. Note what would shift the conclusion if new context emerges. </conclusion>
+<memory_consolidation> If you learned a new universal rule, a fact about the user, or a valuable insight during this exchange, state it clearly here so it can be saved to your permanent memory bank. If nothing new was learned, leave this blank. </memory_consolidation>"""
 
 STRATEGIC_SYSTEM_PROMPT = """Follow this exact structure for agentic planning. Do not skip tags.
+<metamemory> Reflect on the provided Internal Agent Memory. Consider past strategies, successes, or failures relevant to this task. </metamemory>
 <analyze> Identify domain, scope, stakeholders, context, and constraints. </analyze>
 <categorize> Separate core rules, exceptions, ambiguities, and dependencies. </categorize>
 <deconstruct> Test validity, identify my own assumptions/biases, find counter-examples, and expose edge cases. </deconstruct>
@@ -47,7 +90,8 @@ STRATEGIC_SYSTEM_PROMPT = """Follow this exact structure for agentic planning. D
 <strategize> Design execution tactics, risk mitigation, contingency scenarios, and trade-off analysis. </strategize>
 <implement> Execute, document processes, and establish real-time feedback mechanisms. </implement>
 <iterate> Monitor output vs. metrics, evaluate gaps, adapt, and manage version control. </iterate>
-<summary> A concise, user-facing summary of the final strategy and next steps. </summary>"""
+<summary> A concise, user-facing summary of the final strategy and next steps. </summary>
+<memory_consolidation> If you formulated a reusable strategic template, a core principle, or a significant learning during this process, state it clearly here so it can be saved to your permanent memory bank. If nothing new was learned, leave this blank. </memory_consolidation>"""
 
 # --- Processing Logic ---
 
@@ -179,9 +223,15 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
         chat_history[-1] = (user_msg, "Searching DuckDuckGo and scraping URLs for factual context...")
         yield chat_history, raw_messages
         search_context = perform_search(user_msg)
-        augmented_query = f"Background Fact-Check Context:\n{search_context}\n\nBased on this context and our ongoing debate, address my latest point:\n{user_msg}"
-    else:
-        augmented_query = user_msg
+
+    chat_history[-1] = (user_msg, "Accessing Internal Agent Memory (ChromaDB)...")
+    yield chat_history, raw_messages
+    memory_context = query_core_memory(user_msg)
+
+    augmented_query = f"Internal Agent Memory:\n{memory_context}\n\n"
+    if search_context:
+        augmented_query += f"Background Fact-Check Context:\n{search_context}\n\n"
+    augmented_query += f"Based on this context and our ongoing debate, address my latest point:\n{user_msg}"
 
     if framework == "Hegelian Dialectic":
         system_prompt = HEGELIAN_SYSTEM_PROMPT
@@ -257,6 +307,14 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     raw_messages.append({"role": "user", "content": user_msg}) # Store clean user msg, not augmented
     raw_messages.append({"role": "assistant", "content": content})
 
+    # Check for memory consolidation
+    memory_match = re.search(r"<memory_consolidation>(.*?)</memory_consolidation>", content, re.DOTALL)
+    if memory_match:
+        insight = memory_match.group(1).strip()
+        # If the model didn't just leave it blank or say "nothing new"
+        if insight and len(insight) > 10 and not insight.lower().startswith("nothing"):
+            deposit_core_memory(insight)
+
     # Log the interaction
     save_chat_to_json(user_msg, framework, search_context, structured_reasoning, conclusion)
 
@@ -292,9 +350,14 @@ def analyze_query(query, framework, enable_search=True):
     if enable_search:
         yield "", "Searching DuckDuckGo and scraping URLs for factual context...", gr.update(visible=False)
         search_context = perform_search(query)
-        augmented_query = f"Background Fact-Check Context:\n{search_context}\n\nBased on this context and your knowledge, address the following query:\n{query}"
-    else:
-        augmented_query = query
+
+    yield "", "Accessing Internal Agent Memory (ChromaDB)...", gr.update(visible=False)
+    memory_context = query_core_memory(query)
+
+    augmented_query = f"Internal Agent Memory:\n{memory_context}\n\n"
+    if search_context:
+        augmented_query += f"Background Fact-Check Context:\n{search_context}\n\n"
+    augmented_query += f"Based on this context and your knowledge, address the following query:\n{query}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -351,6 +414,13 @@ def analyze_query(query, framework, enable_search=True):
 
         # During streaming, don't update the download button yet
         yield hidden_reasoning_display, conclusion, gr.update()
+
+    # Check for memory consolidation
+    memory_match = re.search(r"<memory_consolidation>(.*?)</memory_consolidation>", content, re.DOTALL)
+    if memory_match:
+        insight = memory_match.group(1).strip()
+        if insight and len(insight) > 10 and not insight.lower().startswith("nothing"):
+            deposit_core_memory(insight)
 
     # Final Save to JSON when streaming completes
     saved_file = save_chat_to_json(query, framework, search_context, structured_reasoning, conclusion)
