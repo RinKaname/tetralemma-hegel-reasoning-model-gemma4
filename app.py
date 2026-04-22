@@ -6,6 +6,8 @@ import json
 import os
 import requests
 import chromadb
+import yfinance as yf
+import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup
 from threading import Thread
 from transformers import AutoProcessor, AutoModelForCausalLM, TextIteratorStreamer
@@ -21,7 +23,7 @@ processor = AutoProcessor.from_pretrained(MODEL_PATH)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_PATH,
     dtype=torch.float16,
-    device_map="auto"
+    device_map="cuda:0"
 )
 
 # --- Vector Database (Metamemory) Setup ---
@@ -61,6 +63,68 @@ def deposit_core_memory(insight):
         print(f"Failed to deposit memory: {str(e)}")
         return False
 
+# --- Financial Tools Setup ---
+if not os.path.exists("charts"):
+    os.makedirs("charts")
+
+def extract_ticker(query):
+    """Simple heuristic to extract a stock ticker (all caps, 1-5 letters) from a query."""
+    match = re.search(r'\b[A-Z]{1,5}\b', query)
+    return match.group(0) if match else None
+
+def fetch_financials(ticker):
+    """Fetches key financial metrics for a given stock ticker."""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        metrics = {
+            "Ticker": ticker,
+            "Current Price": info.get("currentPrice", "N/A"),
+            "Market Cap": info.get("marketCap", "N/A"),
+            "Trailing P/E": info.get("trailingPE", "N/A"),
+            "Forward P/E": info.get("forwardPE", "N/A"),
+            "Total Revenue": info.get("totalRevenue", "N/A"),
+            "Revenue Growth": info.get("revenueGrowth", "N/A"),
+            "EBITDA": info.get("ebitda", "N/A"),
+            "Total Debt": info.get("totalDebt", "N/A"),
+            "Free Cash Flow": info.get("freeCashflow", "N/A"),
+            "Operating Margins": info.get("operatingMargins", "N/A"),
+            "Return on Equity (ROE)": info.get("returnOnEquity", "N/A")
+        }
+
+        # Format as a clean string for the LLM
+        formatted_data = f"Financial Snapshot for {ticker}:\n"
+        for k, v in metrics.items():
+            formatted_data += f"- {k}: {v}\n"
+        return formatted_data
+    except Exception as e:
+        return f"Could not fetch financials for {ticker}. Error: {str(e)}"
+
+def generate_financial_chart(ticker):
+    """Generates a historical price chart and returns markdown link."""
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1y")
+        if hist.empty:
+            return ""
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(hist.index, hist['Close'], color='#2ca02c')
+        plt.title(f"{ticker} 1-Year Price History")
+        plt.xlabel("Date")
+        plt.ylabel("Closing Price (USD)")
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+
+        chart_path = f"charts/{ticker}_price.png"
+        plt.savefig(chart_path)
+        plt.close()
+
+        return f"\n\n![{ticker} Historical Price](file/{chart_path})"
+    except Exception as e:
+        print(f"Chart generation failed: {e}")
+        return ""
+
 # --- Prompts ---
 HEGELIAN_SYSTEM_PROMPT = """Follow this exact structure in your reasoning before responding. Do not skip tags.
 <metamemory> Reflect on the provided Internal Agent Memory. Has your past knowledge on this topic been validated or challenged? </metamemory>
@@ -92,6 +156,15 @@ STRATEGIC_SYSTEM_PROMPT = """Follow this exact structure for agentic planning. D
 <iterate> Monitor output vs. metrics, evaluate gaps, adapt, and manage version control. </iterate>
 <summary> A concise, user-facing summary of the final strategy and next steps. </summary>
 <memory_consolidation> If you formulated a reusable strategic template, a core principle, or a significant learning during this process, state it clearly here so it can be saved to your permanent memory bank. If nothing new was learned, leave this blank. </memory_consolidation>"""
+
+VALUATION_SYSTEM_PROMPT = """Follow this exact structure for corporate valuation. Do not skip tags. If you need to generate math equations (e.g., DCF formulas), use standard LaTeX formatting ($ for inline, $$ for block).
+<metamemory> Reflect on the provided Internal Agent Memory regarding past valuations, sector trends, or known biases. </metamemory>
+<data_retrieval> Analyze the provided raw financial metrics and note key strengths or red flags. </data_retrieval>
+<modeling> Detail your valuation approach (e.g., DCF, multiples). State your assumptions for growth, margins, and discount rate clearly. </modeling>
+<visualize> Note the provided historical price chart and contextually integrate its trends into your modeling. </visualize>
+<synthesis> Fuse the quantitative data and qualitative trends into a cohesive investment thesis. </synthesis>
+<summary> A clear, user-facing summary including an estimated fair value or actionable recommendation. If a chart markdown is provided, output it here so the user can see it. </summary>
+<memory_consolidation> If you discovered a new sector-wide trend, a critical KPI relationship, or a novel modeling heuristic, state it clearly here so it can be saved to your permanent memory bank. If nothing new was learned, leave this blank. </memory_consolidation>"""
 
 # --- Processing Logic ---
 
@@ -177,32 +250,43 @@ def parse_output(response_text, framework):
     # For streaming, if we don't have the closing tags yet, just show everything in the reasoning block
     # and say "Thinking..." in the conclusion block.
 
+    # Strip <memory_consolidation> out of the reasoning block display, we handle it separately
+    response_text_display = re.sub(r"<memory_consolidation>.*?</memory_consolidation>", "", response_text, flags=re.DOTALL).strip()
+
     if framework == "Hegelian Dialectic":
-        match = re.search(r"(<reason>.*?</synthesis>)\s*<final>(.*?)</final>", response_text, re.DOTALL)
+        match = re.search(r"(<metamemory>.*?</synthesis>)\s*<final>(.*?)</final>", response_text_display, re.DOTALL)
         if match:
             return match.group(1).strip(), match.group(2).strip()
-        elif "<final>" in response_text:
-            parts = response_text.split("<final>")
+        elif "<final>" in response_text_display:
+            parts = response_text_display.split("<final>")
             return parts[0].strip(), parts[1].replace("</final>", "").strip()
 
     elif framework == "Tetralemma (Systemic)":
-        match = re.search(r"(<reason>.*?</deconstruction>)\s*<conclusion>(.*?)</conclusion>", response_text, re.DOTALL)
+        match = re.search(r"(<metamemory>.*?</deconstruction>)\s*<conclusion>(.*?)</conclusion>", response_text_display, re.DOTALL)
         if match:
             return match.group(1).strip(), match.group(2).strip()
-        elif "<conclusion>" in response_text:
-            parts = response_text.split("<conclusion>")
+        elif "<conclusion>" in response_text_display:
+            parts = response_text_display.split("<conclusion>")
             return parts[0].strip(), parts[1].replace("</conclusion>", "").strip()
 
     elif framework == "Strategic Execution (Agentic)":
-        match = re.search(r"(<analyze>.*?</iterate>)\s*<summary>(.*?)</summary>", response_text, re.DOTALL)
+        match = re.search(r"(<metamemory>.*?</iterate>)\s*<summary>(.*?)</summary>", response_text_display, re.DOTALL)
         if match:
             return match.group(1).strip(), match.group(2).strip()
-        elif "<summary>" in response_text:
-            parts = response_text.split("<summary>")
+        elif "<summary>" in response_text_display:
+            parts = response_text_display.split("<summary>")
+            return parts[0].strip(), parts[1].replace("</summary>", "").strip()
+
+    elif framework == "Corporate Valuation Analyst":
+        match = re.search(r"(<metamemory>.*?</synthesis>)\s*<summary>(.*?)</summary>", response_text_display, re.DOTALL)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+        elif "<summary>" in response_text_display:
+            parts = response_text_display.split("<summary>")
             return parts[0].strip(), parts[1].replace("</summary>", "").strip()
 
     # Fallback for mid-stream
-    return response_text, "Thinking..."
+    return response_text_display, "Thinking..."
 
 def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     """
@@ -217,6 +301,17 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     chat_history[-1] = (user_msg, "Initializing Agentic RAG...")
     yield chat_history, raw_messages
 
+    # Valuation Framework specific pre-fetching
+    financial_context = ""
+    chart_markdown = ""
+    if framework == "Corporate Valuation Analyst":
+        ticker = extract_ticker(user_msg)
+        if ticker:
+            chat_history[-1] = (user_msg, f"Fetching live financial data and charts for {ticker} via yfinance...")
+            yield chat_history, raw_messages
+            financial_context = fetch_financials(ticker)
+            chart_markdown = generate_financial_chart(ticker)
+
     # RAG / Search Step
     search_context = ""
     if enable_search:
@@ -229,6 +324,10 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     memory_context = query_core_memory(user_msg)
 
     augmented_query = f"Internal Agent Memory:\n{memory_context}\n\n"
+    if financial_context:
+        augmented_query += f"Financial Data Fetched via yfinance:\n{financial_context}\n\n"
+        if chart_markdown:
+            augmented_query += f"Generated Chart Markdown (Include this in your final summary exactly as is to display the graph):\n{chart_markdown}\n\n"
     if search_context:
         augmented_query += f"Background Fact-Check Context:\n{search_context}\n\n"
     augmented_query += f"Based on this context and our ongoing debate, address my latest point:\n{user_msg}"
@@ -237,8 +336,10 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
         system_prompt = HEGELIAN_SYSTEM_PROMPT
     elif framework == "Tetralemma (Systemic)":
         system_prompt = TETRALEMMA_SYSTEM_PROMPT
-    else:
+    elif framework == "Strategic Execution (Agentic)":
         system_prompt = STRATEGIC_SYSTEM_PROMPT
+    else:
+        system_prompt = VALUATION_SYSTEM_PROMPT
 
     # Initialize raw messages if empty
     if not raw_messages:
@@ -342,8 +443,20 @@ def analyze_query(query, framework, enable_search=True):
         system_prompt = HEGELIAN_SYSTEM_PROMPT
     elif framework == "Tetralemma (Systemic)":
         system_prompt = TETRALEMMA_SYSTEM_PROMPT
-    else:
+    elif framework == "Strategic Execution (Agentic)":
         system_prompt = STRATEGIC_SYSTEM_PROMPT
+    else:
+        system_prompt = VALUATION_SYSTEM_PROMPT
+
+    # Valuation Framework specific pre-fetching
+    financial_context = ""
+    chart_markdown = ""
+    if framework == "Corporate Valuation Analyst":
+        ticker = extract_ticker(query)
+        if ticker:
+            yield "", f"Fetching live financial data and charts for {ticker} via yfinance...", gr.update(visible=False)
+            financial_context = fetch_financials(ticker)
+            chart_markdown = generate_financial_chart(ticker)
 
     # RAG / Search Step
     search_context = ""
@@ -355,6 +468,10 @@ def analyze_query(query, framework, enable_search=True):
     memory_context = query_core_memory(query)
 
     augmented_query = f"Internal Agent Memory:\n{memory_context}\n\n"
+    if financial_context:
+        augmented_query += f"Financial Data Fetched via yfinance:\n{financial_context}\n\n"
+        if chart_markdown:
+            augmented_query += f"Generated Chart Markdown (Include this in your final summary exactly as is to display the graph):\n{chart_markdown}\n\n"
     if search_context:
         augmented_query += f"Background Fact-Check Context:\n{search_context}\n\n"
     augmented_query += f"Based on this context and your knowledge, address the following query:\n{query}"
@@ -449,10 +566,10 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                     )
                 with gr.Column(scale=1):
                     framework_dropdown = gr.Dropdown(
-                        choices=["Hegelian Dialectic", "Tetralemma (Systemic)", "Strategic Execution (Agentic)"],
+                        choices=["Hegelian Dialectic", "Tetralemma (Systemic)", "Strategic Execution (Agentic)", "Corporate Valuation Analyst"],
                         value="Hegelian Dialectic",
                         label="Select Cognitive Framework",
-                        info="Hegel resolves operational conflicts. Tetralemma deconstructs false dichotomies. Strategic plans execution."
+                        info="Hegel resolves operational conflicts. Tetralemma deconstructs false dichotomies. Strategic plans execution. Valuation performs financial modeling."
                     )
                     enable_search_checkbox = gr.Checkbox(
                         label="Enable Agentic Search (RAG)",
@@ -474,7 +591,10 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
             # The complex reasoning is hidden in an accordion
             with gr.Accordion("View System 2 Philosophical Reasoning Flow (Audit Log)", open=False):
                 gr.Markdown("Transparency is critical for Trust & Safety. Here is the exact logical scaffolding the model used to arrive at the conclusion.")
-                reasoning_output = gr.Markdown(show_copy_button=True)
+                reasoning_output = gr.Markdown(
+                    show_copy_button=True,
+                    latex_delimiters=[{"left": "$$", "right": "$$", "display": True}, {"left": "$", "right": "$", "display": False}]
+                )
 
             with gr.Row():
                 # Hide the button initially. It will appear when generation finishes.
@@ -491,7 +611,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
 
             with gr.Row():
                 chat_framework_dropdown = gr.Dropdown(
-                    choices=["Hegelian Dialectic", "Tetralemma (Systemic)", "Strategic Execution (Agentic)"],
+                    choices=["Hegelian Dialectic", "Tetralemma (Systemic)", "Strategic Execution (Agentic)", "Corporate Valuation Analyst"],
                     value="Hegelian Dialectic",
                     label="Select Active Cognitive Framework",
                 )
@@ -500,7 +620,11 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                     value=True,
                 )
 
-            chatbot = gr.Chatbot(height=500, show_copy_button=True)
+            chatbot = gr.Chatbot(
+                height=500,
+                show_copy_button=True,
+                latex_delimiters=[{"left": "$$", "right": "$$", "display": True}, {"left": "$", "right": "$", "display": False}]
+            )
             raw_messages_state = gr.State([])
 
             with gr.Row():

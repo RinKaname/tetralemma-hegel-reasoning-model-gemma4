@@ -1,10 +1,12 @@
 gradio
 ddgs
 kagglehub
-transformers
+git+https://github.com/huggingface/transformers.git
 torch
 accelerate
 beautifulsoup4
 requests
 chromadb
 sentence-transformers
+yfinance
+matplotlib
