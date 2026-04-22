@@ -21,7 +21,7 @@ processor = AutoProcessor.from_pretrained(MODEL_PATH)
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_PATH,
     dtype=torch.float16,
-    device_map="auto"
+    device_map="cuda:0"
 )
 
 # --- Vector Database (Metamemory) Setup ---
@@ -177,32 +177,35 @@ def parse_output(response_text, framework):
     # For streaming, if we don't have the closing tags yet, just show everything in the reasoning block
     # and say "Thinking..." in the conclusion block.
 
+    # Strip <memory_consolidation> out of the reasoning block display, we handle it separately
+    response_text_display = re.sub(r"<memory_consolidation>.*?</memory_consolidation>", "", response_text, flags=re.DOTALL).strip()
+
     if framework == "Hegelian Dialectic":
-        match = re.search(r"(<reason>.*?</synthesis>)\s*<final>(.*?)</final>", response_text, re.DOTALL)
+        match = re.search(r"(<metamemory>.*?</synthesis>)\s*<final>(.*?)</final>", response_text_display, re.DOTALL)
         if match:
             return match.group(1).strip(), match.group(2).strip()
-        elif "<final>" in response_text:
-            parts = response_text.split("<final>")
+        elif "<final>" in response_text_display:
+            parts = response_text_display.split("<final>")
             return parts[0].strip(), parts[1].replace("</final>", "").strip()
 
     elif framework == "Tetralemma (Systemic)":
-        match = re.search(r"(<reason>.*?</deconstruction>)\s*<conclusion>(.*?)</conclusion>", response_text, re.DOTALL)
+        match = re.search(r"(<metamemory>.*?</deconstruction>)\s*<conclusion>(.*?)</conclusion>", response_text_display, re.DOTALL)
         if match:
             return match.group(1).strip(), match.group(2).strip()
-        elif "<conclusion>" in response_text:
-            parts = response_text.split("<conclusion>")
+        elif "<conclusion>" in response_text_display:
+            parts = response_text_display.split("<conclusion>")
             return parts[0].strip(), parts[1].replace("</conclusion>", "").strip()
 
     elif framework == "Strategic Execution (Agentic)":
-        match = re.search(r"(<analyze>.*?</iterate>)\s*<summary>(.*?)</summary>", response_text, re.DOTALL)
+        match = re.search(r"(<metamemory>.*?</iterate>)\s*<summary>(.*?)</summary>", response_text_display, re.DOTALL)
         if match:
             return match.group(1).strip(), match.group(2).strip()
-        elif "<summary>" in response_text:
-            parts = response_text.split("<summary>")
+        elif "<summary>" in response_text_display:
+            parts = response_text_display.split("<summary>")
             return parts[0].strip(), parts[1].replace("</summary>", "").strip()
 
     # Fallback for mid-stream
-    return response_text, "Thinking..."
+    return response_text_display, "Thinking..."
 
 def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     """
@@ -474,7 +477,10 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
             # The complex reasoning is hidden in an accordion
             with gr.Accordion("View System 2 Philosophical Reasoning Flow (Audit Log)", open=False):
                 gr.Markdown("Transparency is critical for Trust & Safety. Here is the exact logical scaffolding the model used to arrive at the conclusion.")
-                reasoning_output = gr.Markdown(show_copy_button=True)
+                reasoning_output = gr.Markdown(
+                    show_copy_button=True,
+                    latex_delimiters=[{"left": "$$", "right": "$$", "display": True}, {"left": "$", "right": "$", "display": False}]
+                )
 
             with gr.Row():
                 # Hide the button initially. It will appear when generation finishes.
@@ -500,7 +506,11 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                     value=True,
                 )
 
-            chatbot = gr.Chatbot(height=500, show_copy_button=True)
+            chatbot = gr.Chatbot(
+                height=500,
+                show_copy_button=True,
+                latex_delimiters=[{"left": "$$", "right": "$$", "display": True}, {"left": "$", "right": "$", "display": False}]
+            )
             raw_messages_state = gr.State([])
 
             with gr.Row():

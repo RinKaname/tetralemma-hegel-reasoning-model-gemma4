@@ -1,7 +1,7 @@
 gradio
 ddgs
 kagglehub
-transformers
+git+https://github.com/huggingface/transformers.git
 torch
 accelerate
 beautifulsoup4
