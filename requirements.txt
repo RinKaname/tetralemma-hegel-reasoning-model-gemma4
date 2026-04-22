@@ -8,3 +8,5 @@ beautifulsoup4
 requests
 chromadb
 sentence-transformers
+yfinance
+matplotlib
