@@ -39,6 +39,16 @@ TETRALEMMA_SYSTEM_PROMPT = """Follow this exact structure. Do not skip tags.
 <deconstruction> Refute the false dichotomy. Reveal the higher-order framing, interdependence, or contextual mechanism that transcends both. </deconstruction>
 <conclusion> Actionable takeaway + explicit boundary conditions. Note what would shift the conclusion if new context emerges. </conclusion>"""
 
+STRATEGIC_SYSTEM_PROMPT = """Follow this exact structure for agentic planning. Do not skip tags.
+<analyze> Identify domain, scope, stakeholders, context, and constraints. </analyze>
+<categorize> Separate core rules, exceptions, ambiguities, and dependencies. </categorize>
+<deconstruct> Test validity, identify my own assumptions/biases, find counter-examples, and expose edge cases. </deconstruct>
+<plan> Define objectives, milestones, resources, ownership, and success metrics. </plan>
+<strategize> Design execution tactics, risk mitigation, contingency scenarios, and trade-off analysis. </strategize>
+<implement> Execute, document processes, and establish real-time feedback mechanisms. </implement>
+<iterate> Monitor output vs. metrics, evaluate gaps, adapt, and manage version control. </iterate>
+<summary> A concise, user-facing summary of the final strategy and next steps. </summary>"""
+
 # --- Processing Logic ---
 
 def save_chat_to_json(query, framework, search_context, reasoning, conclusion):
@@ -139,6 +149,14 @@ def parse_output(response_text, framework):
             parts = response_text.split("<conclusion>")
             return parts[0].strip(), parts[1].replace("</conclusion>", "").strip()
 
+    elif framework == "Strategic Execution (Agentic)":
+        match = re.search(r"(<analyze>.*?</iterate>)\s*<summary>(.*?)</summary>", response_text, re.DOTALL)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+        elif "<summary>" in response_text:
+            parts = response_text.split("<summary>")
+            return parts[0].strip(), parts[1].replace("</summary>", "").strip()
+
     # Fallback for mid-stream
     return response_text, "Thinking..."
 
@@ -165,7 +183,12 @@ def chat_inference(chat_history, raw_messages, framework, enable_search=True):
     else:
         augmented_query = user_msg
 
-    system_prompt = HEGELIAN_SYSTEM_PROMPT if framework == "Hegelian Dialectic" else TETRALEMMA_SYSTEM_PROMPT
+    if framework == "Hegelian Dialectic":
+        system_prompt = HEGELIAN_SYSTEM_PROMPT
+    elif framework == "Tetralemma (Systemic)":
+        system_prompt = TETRALEMMA_SYSTEM_PROMPT
+    else:
+        system_prompt = STRATEGIC_SYSTEM_PROMPT
 
     # Initialize raw messages if empty
     if not raw_messages:
@@ -257,7 +280,12 @@ def analyze_query(query, framework, enable_search=True):
     yield "", "Initializing Agentic RAG...", gr.update(visible=False)
 
     # Select prompt based on dropdown
-    system_prompt = HEGELIAN_SYSTEM_PROMPT if framework == "Hegelian Dialectic" else TETRALEMMA_SYSTEM_PROMPT
+    if framework == "Hegelian Dialectic":
+        system_prompt = HEGELIAN_SYSTEM_PROMPT
+    elif framework == "Tetralemma (Systemic)":
+        system_prompt = TETRALEMMA_SYSTEM_PROMPT
+    else:
+        system_prompt = STRATEGIC_SYSTEM_PROMPT
 
     # RAG / Search Step
     search_context = ""
@@ -351,10 +379,10 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
                     )
                 with gr.Column(scale=1):
                     framework_dropdown = gr.Dropdown(
-                        choices=["Hegelian Dialectic", "Tetralemma (Systemic)"],
+                        choices=["Hegelian Dialectic", "Tetralemma (Systemic)", "Strategic Execution (Agentic)"],
                         value="Hegelian Dialectic",
                         label="Select Cognitive Framework",
-                        info="Hegel resolves operational conflicts. Tetralemma deconstructs false dichotomies."
+                        info="Hegel resolves operational conflicts. Tetralemma deconstructs false dichotomies. Strategic plans execution."
                     )
                     enable_search_checkbox = gr.Checkbox(
                         label="Enable Agentic Search (RAG)",
@@ -393,7 +421,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=custom_css) as app:
 
             with gr.Row():
                 chat_framework_dropdown = gr.Dropdown(
-                    choices=["Hegelian Dialectic", "Tetralemma (Systemic)"],
+                    choices=["Hegelian Dialectic", "Tetralemma (Systemic)", "Strategic Execution (Agentic)"],
                     value="Hegelian Dialectic",
                     label="Select Active Cognitive Framework",
                 )
